@@ -61,6 +61,7 @@ pin-project-lite = "0.2.14"
 regex = "1.10.4"
 serde.workspace = true
 serde_json.workspace = true
+sonic-rs = { git = "https://github.com/cloudwego/sonic-rs.git" }
 static_assertions_next = "1.1.2"
 thiserror.workspace = true
 base64 = "0.22.0"
