@@ -183,6 +183,7 @@ impl InputType for sonic_rs::Value {
             inaccessible: false,
             tags: Default::default(),
             specified_by_url: None,
+            directive_invocations: Default::default(),
         })
     }
 
@@ -214,6 +215,7 @@ impl OutputType for sonic_rs::Value {
                 inaccessible: false,
                 tags: Default::default(),
                 specified_by_url: None,
+                directive_invocations: Default::default(),
             }
         })
     }
