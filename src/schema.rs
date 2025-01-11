@@ -667,7 +667,7 @@ where
         request: Request,
         session_data: Option<Arc<Data>>,
     ) -> BoxStream<'static, Response> {
-        Schema::execute_stream_with_session_data(&self, request, session_data.unwrap_or_default())
+        Schema::execute_stream_with_session_data(self, request, session_data.unwrap_or_default())
             .boxed()
     }
 }

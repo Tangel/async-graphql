@@ -214,7 +214,7 @@ impl<T: InputType> InputType for Box<T> {
     }
 
     fn to_value(&self) -> ConstValue {
-        T::to_value(&self)
+        T::to_value(self)
     }
 
     fn as_raw_value(&self) -> Option<&Self::RawValueType> {
@@ -260,7 +260,7 @@ impl<T: InputType> InputType for Arc<T> {
     }
 
     fn to_value(&self) -> ConstValue {
-        T::to_value(&self)
+        T::to_value(self)
     }
 
     fn as_raw_value(&self) -> Option<&Self::RawValueType> {

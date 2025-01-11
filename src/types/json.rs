@@ -133,7 +133,7 @@ impl InputType for serde_json::Value {
     }
 
     fn as_raw_value(&self) -> Option<&Self::RawValueType> {
-        Some(&self)
+        Some(self)
     }
 }
 
@@ -196,7 +196,7 @@ impl InputType for sonic_rs::Value {
     }
 
     fn as_raw_value(&self) -> Option<&Self::RawValueType> {
-        Some(&self)
+        Some(self)
     }
 }
 

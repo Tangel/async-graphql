@@ -610,8 +610,8 @@ impl MetaType {
     #[inline]
     pub fn fields(&self) -> Option<&IndexMap<String, MetaField>> {
         match self {
-            MetaType::Object { fields, .. } => Some(&fields),
-            MetaType::Interface { fields, .. } => Some(&fields),
+            MetaType::Object { fields, .. } => Some(fields),
+            MetaType::Interface { fields, .. } => Some(fields),
             _ => None,
         }
     }
@@ -632,7 +632,7 @@ impl MetaType {
     #[inline]
     pub fn name(&self) -> &str {
         match self {
-            MetaType::Scalar { name, .. } => &name,
+            MetaType::Scalar { name, .. } => name,
             MetaType::Object { name, .. } => name,
             MetaType::Interface { name, .. } => name,
             MetaType::Union { name, .. } => name,
@@ -1324,15 +1324,10 @@ impl Registry {
                 MetaType::Object { name, fields, .. }
                 | MetaType::Interface { name, fields, .. } => {
                     names.insert(name.clone());
-                    names.extend(
-                        fields
-                            .values()
-                            .map(|field| {
-                                std::iter::once(field.name.clone())
-                                    .chain(field.args.values().map(|arg| arg.name.to_string()))
-                            })
-                            .flatten(),
-                    );
+                    names.extend(fields.values().flat_map(|field| {
+                        std::iter::once(field.name.clone())
+                            .chain(field.args.values().map(|arg| arg.name.to_string()))
+                    }));
                 }
                 MetaType::Enum {
                     name, enum_values, ..

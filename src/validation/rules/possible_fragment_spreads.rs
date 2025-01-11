@@ -57,7 +57,7 @@ impl<'a> Visitor<'a> for PossibleFragmentSpreads<'a> {
                 .map(|c| &c.node)
             {
                 if let Some(on_type) = ctx.registry.types.get(fragment_type.node.as_str()) {
-                    if !parent_type.type_overlap(&on_type) {
+                    if !parent_type.type_overlap(on_type) {
                         ctx.report_error(
                             vec![inline_fragment.pos],
                             format!(

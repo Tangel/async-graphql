@@ -2,12 +2,12 @@
 #![allow(dead_code)]
 #![allow(clippy::diverging_sub_expression)]
 
+#[cfg(feature = "chrono")]
 use std::{collections::HashMap, convert::Infallible};
 
-use async_graphql::{
-    dataloader::{DataLoader, Loader},
-    *,
-};
+#[cfg(feature = "dataloader")]
+use async_graphql::dataloader::{DataLoader, Loader};
+use async_graphql::*;
 
 #[tokio::test]
 pub async fn test_nested_key() {
@@ -154,6 +154,7 @@ pub async fn test_federation() {
     );
 }
 
+#[cfg(feature = "dataloader")]
 #[tokio::test]
 pub async fn test_find_entity_with_context() {
     struct MyLoader;

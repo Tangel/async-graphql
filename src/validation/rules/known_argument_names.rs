@@ -30,8 +30,7 @@ impl KnownArgumentNames<'_> {
             " Did you mean",
             self.current_args
                 .iter()
-                .map(|(args, _)| args.iter().map(|arg| arg.0.as_str()))
-                .flatten(),
+                .flat_map(|(args, _)| args.iter().map(|arg| arg.0.as_str())),
             name,
         )
         .unwrap_or_default()

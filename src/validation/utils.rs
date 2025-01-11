@@ -78,7 +78,7 @@ pub fn is_valid_input_value(
                     is_valid: Some(is_valid_fn),
                     ..
                 } => {
-                    if (is_valid_fn)(&value) {
+                    if (is_valid_fn)(value) {
                         None
                     } else {
                         Some(valid_error(

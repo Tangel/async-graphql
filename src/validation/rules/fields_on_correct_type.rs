@@ -44,8 +44,7 @@ impl<'a> Visitor<'a> for FieldsOnCorrectType {
                                 parent_type
                                     .fields()
                                     .iter()
-                                    .map(|fields| fields.keys())
-                                    .flatten()
+                                    .flat_map(|fields| fields.keys())
                                     .map(String::as_str),
                                 &field.node.name.node,
                             )

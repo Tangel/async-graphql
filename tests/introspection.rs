@@ -2,6 +2,7 @@
 #![allow(clippy::diverging_sub_expression)]
 
 use async_graphql::*;
+#[cfg(feature = "chrono")]
 use chrono::{NaiveDate, NaiveDateTime};
 use futures_util::stream::{self, Stream};
 
@@ -1383,6 +1384,7 @@ pub async fn test_introspection_only() {
     assert_eq!(res, res_json);
 }
 
+#[cfg(feature = "chrono")]
 #[tokio::test]
 pub async fn test_introspection_default() {
     #[derive(serde::Serialize, serde::Deserialize, Default)]

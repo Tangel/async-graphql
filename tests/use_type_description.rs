@@ -1,6 +1,7 @@
 #![allow(clippy::diverging_sub_expression)]
 
 use async_graphql::*;
+#[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 use futures_util::stream::Stream;
 
@@ -137,6 +138,7 @@ pub async fn test_subscription() {
     );
 }
 
+#[cfg(feature = "chrono")]
 #[tokio::test]
 pub async fn test_override_description() {
     /// Haha
