@@ -14,8 +14,6 @@ mod multipart_subscribe;
 mod playground_source;
 mod websocket;
 
-use std::io::ErrorKind;
-
 #[cfg(feature = "altair")]
 pub use altair_source::*;
 use futures_util::io::{AsyncRead, AsyncReadExt};
@@ -49,23 +47,18 @@ pub fn parse_query_string(input: &str) -> Result<Request, ParseRequestError> {
         pub extensions: Option<String>,
     }
 
-    let request: RequestSerde = serde_urlencoded::from_str(input)
-        .map_err(|err| std::io::Error::new(ErrorKind::Other, err))?;
+    let request: RequestSerde = serde_urlencoded::from_str(input).map_err(std::io::Error::other)?;
     let variables = request
         .variables
         .map(|data| serde_json::from_str(&data))
         .transpose()
-        .map_err(|err| {
-            std::io::Error::new(ErrorKind::Other, format!("invalid variables: {}", err))
-        })?
+        .map_err(|err| std::io::Error::other(format!("invalid variables: {}", err)))?
         .unwrap_or_default();
     let extensions = request
         .extensions
         .map(|data| serde_json::from_str(&data))
         .transpose()
-        .map_err(|err| {
-            std::io::Error::new(ErrorKind::Other, format!("invalid extensions: {}", err))
-        })?
+        .map_err(|err| std::io::Error::other(format!("invalid extensions: {}", err)))?
         .unwrap_or_default();
 
     Ok(Request {
@@ -97,7 +90,7 @@ pub async fn receive_batch_body(
     let content_type = content_type
         .as_ref()
         .map(AsRef::as_ref)
-        .unwrap_or("application/json");
+        .unwrap_or("application/graphql-response+json");
 
     let content_type: mime::Mime = content_type.parse()?;
 
