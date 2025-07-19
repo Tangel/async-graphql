@@ -1,6 +1,6 @@
 //! Apollo persisted queries extension.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{future::Future, num::NonZeroUsize, sync::Arc};
 
 use async_graphql_parser::types::ExecutableDocument;
 use futures_util::lock::Mutex;
@@ -21,13 +21,12 @@ struct PersistedQuery {
 }
 
 /// Cache storage for persisted queries.
-#[async_trait::async_trait]
 pub trait CacheStorage: Send + Sync + Clone + 'static {
     /// Load the query by `key`.
-    async fn get(&self, key: String) -> Option<ExecutableDocument>;
+    fn get(&self, key: String) -> impl Future<Output = Option<ExecutableDocument>> + Send;
 
     /// Save the query by `key`.
-    async fn set(&self, key: String, query: ExecutableDocument);
+    fn set(&self, key: String, query: ExecutableDocument) -> impl Future<Output = ()> + Send;
 }
 
 /// Memory-based LRU cache.
@@ -43,7 +42,6 @@ impl LruCacheStorage {
     }
 }
 
-#[async_trait::async_trait]
 impl CacheStorage for LruCacheStorage {
     async fn get(&self, key: String) -> Option<ExecutableDocument> {
         let mut cache = self.0.lock().await;
