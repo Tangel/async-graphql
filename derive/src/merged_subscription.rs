@@ -6,11 +6,11 @@ use syn::{Error, LitInt};
 
 use crate::{
     args::{self, RenameTarget},
-    utils::{GeneratorResult, get_crate_name, get_rustdoc, visible_fn},
+    utils::{GeneratorResult, get_crate_path, get_rustdoc, visible_fn},
 };
 
 pub fn generate(object_args: &args::MergedSubscription) -> GeneratorResult<TokenStream> {
-    let crate_name = get_crate_name(object_args.internal);
+    let crate_name = get_crate_path(&object_args.crate_path, object_args.internal);
     let ident = &object_args.ident;
     let (impl_generics, ty_generics, where_clause) = object_args.generics.split_for_impl();
     let extends = object_args.extends;
@@ -22,6 +22,15 @@ pub fn generate(object_args: &args::MergedSubscription) -> GeneratorResult<Token
         quote!(::std::borrow::Cow::Borrowed(#name))
     } else {
         quote!(<Self as #crate_name::TypeName>::type_name())
+    };
+    let gql_typename_string = if !object_args.name_type {
+        let name = object_args
+            .name
+            .clone()
+            .unwrap_or_else(|| RenameTarget::Type.rename(ident.to_string()));
+        quote!(::std::string::ToString::to_string(#name))
+    } else {
+        quote!(::std::string::ToString::to_string(&#gql_typename))
     };
 
     let desc = get_rustdoc(&object_args.attrs)?
@@ -73,7 +82,7 @@ pub fn generate(object_args: &args::MergedSubscription) -> GeneratorResult<Token
                     }
 
                     #crate_name::registry::MetaType::Object {
-                        name: ::std::borrow::Cow::into_owned(#gql_typename),
+                        name: #gql_typename_string,
                         description: #desc,
                         fields,
                         cache_control: ::std::default::Default::default(),

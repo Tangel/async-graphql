@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use futures_util::{TryFutureExt, stream::BoxStream};
+use tracing::{Level, span};
 use tracing_futures::Instrument;
-use tracinglib::{Level, span};
 
 use crate::{
     Response, ServerError, ServerResult, ValidationResult, Value, Variables,
@@ -11,6 +11,7 @@ use crate::{
         NextResolve, NextSubscribe, NextValidation, ResolveInfo,
     },
     parser::types::ExecutableDocument,
+    registry::MetaTypeName,
 };
 
 /// Tracing extension
@@ -40,13 +41,70 @@ use crate::{
 #[cfg_attr(docsrs, doc(cfg(feature = "tracing")))]
 pub struct Tracing;
 
-impl ExtensionFactory for Tracing {
-    fn create(&self) -> Arc<dyn Extension> {
-        Arc::new(TracingExtension)
+impl Tracing {
+    /// Create a configurable tracing extension.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use async_graphql::{extensions::Tracing, *};
+    ///
+    /// #[derive(SimpleObject)]
+    /// struct Query {
+    ///     value: i32,
+    /// }
+    ///
+    /// // Trace all fields including scalars
+    /// let schema = Schema::build(Query { value: 100 }, EmptyMutation, EmptySubscription)
+    ///     .extension(Tracing::config().with_trace_scalars(true))
+    ///     .finish();
+    /// ```
+    pub fn config() -> TracingConfig {
+        TracingConfig::default()
     }
 }
 
-struct TracingExtension;
+impl ExtensionFactory for Tracing {
+    fn create(&self) -> Arc<dyn Extension> {
+        Arc::new(TracingExtension {
+            trace_scalars: false,
+        })
+    }
+}
+
+/// Configuration for the [`Tracing`] extension.
+#[cfg_attr(docsrs, doc(cfg(feature = "tracing")))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TracingConfig {
+    trace_scalars: bool,
+}
+
+impl TracingConfig {
+    /// Enable or disable tracing for scalar and enum field resolutions.
+    ///
+    /// When `false` (the default), spans are not created for fields that return
+    /// scalar or enum types. This significantly reduces the number of spans
+    /// generated, preventing span explosion in queries with many scalar fields.
+    ///
+    /// When `true`, spans are created for all field resolutions, including
+    /// scalars and enums.
+    pub fn with_trace_scalars(mut self, trace_scalars: bool) -> Self {
+        self.trace_scalars = trace_scalars;
+        self
+    }
+}
+
+impl ExtensionFactory for TracingConfig {
+    fn create(&self) -> Arc<dyn Extension> {
+        Arc::new(TracingExtension {
+            trace_scalars: self.trace_scalars,
+        })
+    }
+}
+
+struct TracingExtension {
+    trace_scalars: bool,
+}
 
 #[async_trait::async_trait]
 impl Extension for TracingExtension {
@@ -84,12 +142,12 @@ impl Extension for TracingExtension {
             target: "async_graphql::graphql",
             Level::INFO,
             "parse",
-            source = tracinglib::field::Empty
+            source = tracing::field::Empty
         );
         async move {
             let res = next.run(ctx, query, variables).await;
             if let Ok(doc) = &res {
-                tracinglib::Span::current()
+                tracing::Span::current()
                     .record("source", ctx.stringify_execute_doc(doc, variables).as_str());
             }
             res
@@ -131,7 +189,23 @@ impl Extension for TracingExtension {
         info: ResolveInfo<'_>,
         next: NextResolve<'_>,
     ) -> ServerResult<Option<Value>> {
-        let span = if !info.is_for_introspection {
+        // Check if we should skip tracing for this field
+        let should_trace = if info.is_for_introspection {
+            false
+        } else if !self.trace_scalars {
+            // Check if the return type is a scalar or enum (leaf type)
+            let concrete_type = MetaTypeName::concrete_typename(info.return_type);
+            !ctx.schema_env
+                .registry
+                .types
+                .get(concrete_type)
+                .map(|ty| ty.is_leaf())
+                .unwrap_or(false)
+        } else {
+            true
+        };
+
+        let span = if should_trace {
             Some(span!(
                 target: "async_graphql::graphql",
                 Level::INFO,
@@ -145,7 +219,7 @@ impl Extension for TracingExtension {
         };
 
         let fut = next.run(ctx, info).inspect_err(|err| {
-            tracinglib::info!(
+            tracing::info!(
                 target: "async_graphql::graphql",
                 error = %err.message,
                 "error",

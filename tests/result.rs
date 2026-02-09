@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use async_graphql::*;
 use futures_util::stream::Stream;
 
@@ -166,6 +168,10 @@ pub async fn test_error_propagation() {
         async fn name_opt(&self) -> Option<Result<i32>> {
             Some(Err("myerror".into()))
         }
+
+        async fn ok(&self) -> Result<i32> {
+            Ok(42)
+        }
     }
 
     struct Query;
@@ -230,7 +236,7 @@ pub async fn test_error_propagation() {
     );
 
     let resp = schema.execute("{ parentOpt { child { name } } }").await;
-    assert_eq!(resp.data, value!({ "parentOpt": null }));
+    assert_eq!(resp.data, value!({ "parentOpt": { "child": null } }));
     assert_eq!(
         resp.errors,
         vec![ServerError {
@@ -276,5 +282,55 @@ pub async fn test_error_propagation() {
             ],
             extensions: None,
         }]
+    );
+
+    let resp = schema
+        .execute("{ parent { child { name, ok }, childOpt { name, ok } } }")
+        .await;
+    assert_eq!(
+        resp.data,
+        value!({
+            "parent": {
+                "child": {
+                    "ok": 42,
+                },
+                "childOpt": {
+                    "ok": 42,
+                },
+            }
+        })
+    );
+    assert_eq!(
+        resp.errors,
+        vec![
+            ServerError {
+                message: "myerror".to_string(),
+                source: None,
+                locations: vec![Pos {
+                    line: 1,
+                    column: 20,
+                }],
+                path: vec![
+                    PathSegment::Field("parent".to_owned()),
+                    PathSegment::Field("child".to_owned()),
+                    PathSegment::Field("name".to_owned()),
+                ],
+                extensions: None,
+            },
+            ServerError {
+                message: "myerror".to_string(),
+                source: None,
+                locations: vec![Pos {
+                    line: 1,
+                    column: 43,
+                }],
+                path: vec![
+                    PathSegment::Field("parent".to_owned()),
+                    PathSegment::Field("childOpt".to_owned()),
+                    PathSegment::Field("name".to_owned()),
+                ],
+                extensions: None,
+            }
+        ]
     );
 }

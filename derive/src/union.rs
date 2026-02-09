@@ -9,12 +9,12 @@ use syn::{Error, LifetimeParam, Type, visit::Visit, visit_mut::VisitMut};
 use crate::{
     args::{self, RenameTarget},
     utils::{
-        GeneratorResult, RemoveLifetime, gen_boxed_trait, get_crate_name, get_rustdoc, visible_fn,
+        GeneratorResult, RemoveLifetime, gen_boxed_trait, get_crate_path, get_rustdoc, visible_fn,
     },
 };
 
 pub fn generate(union_args: &args::Union) -> GeneratorResult<TokenStream> {
-    let crate_name = get_crate_name(union_args.internal);
+    let crate_name = get_crate_path(&union_args.crate_path, union_args.internal);
     let boxed_trait = gen_boxed_trait(&crate_name);
     let ident = &union_args.ident;
     let type_params = union_args.generics.type_params().collect::<Vec<_>>();
@@ -34,6 +34,15 @@ pub fn generate(union_args: &args::Union) -> GeneratorResult<TokenStream> {
         quote!(::std::borrow::Cow::Borrowed(#name))
     } else {
         quote!(<Self as #crate_name::TypeName>::type_name())
+    };
+    let gql_typename_string = if !union_args.name_type {
+        let name = union_args
+            .name
+            .clone()
+            .unwrap_or_else(|| RenameTarget::Type.rename(ident.to_string()));
+        quote!(::std::string::ToString::to_string(#name))
+    } else {
+        quote!(::std::string::ToString::to_string(&#gql_typename))
     };
 
     let inaccessible = union_args.inaccessible;
@@ -235,7 +244,7 @@ pub fn generate(union_args: &args::Union) -> GeneratorResult<TokenStream> {
                         #(#registry_types)*
 
                         #crate_name::registry::MetaType::Union {
-                            name: ::std::borrow::Cow::into_owned(#gql_typename),
+                            name: #gql_typename_string,
                             description: #desc,
                             possible_types: {
                                 let mut possible_types = #crate_name::indexmap::IndexSet::new();
@@ -325,14 +334,13 @@ pub fn generate(union_args: &args::Union) -> GeneratorResult<TokenStream> {
 
                                         // Check if the type is a generic parameter which we should
                                         // convert to a concrete type
-                                        if let syn::Type::Path(ty_path) = ty {
-                                            if let Some(idx) = type_params.iter().position(|p| {
+                                        if let syn::Type::Path(ty_path) = ty
+                                            && let Some(idx) = type_params.iter().position(|p| {
                                                 p.ident == ty_path.path.segments[0].ident
-                                            }) {
-                                                let param = &params[idx];
-                                                *ty = syn::parse2::<syn::Type>(quote!(#param))
-                                                    .unwrap();
-                                            }
+                                            })
+                                        {
+                                            let param = &params[idx];
+                                            *ty = syn::parse2::<syn::Type>(quote!(#param)).unwrap();
                                         }
                                     }
                                 }

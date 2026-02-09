@@ -10,7 +10,7 @@ use crate::{
     output_type::OutputType,
     utils::{
         GeneratorResult, extract_input_args, gen_deprecation, gen_directive_calls,
-        generate_default, generate_guards, get_cfg_attrs, get_crate_name, get_rustdoc,
+        generate_default, generate_guards, get_cfg_attrs, get_crate_path, get_rustdoc,
         get_type_path_and_name, parse_complexity_expr, parse_graphql_attrs, remove_graphql_attrs,
         visible_fn,
     },
@@ -20,13 +20,16 @@ pub fn generate(
     subscription_args: &args::Subscription,
     item_impl: &mut ItemImpl,
 ) -> GeneratorResult<TokenStream> {
-    let crate_name = get_crate_name(subscription_args.internal);
+    let crate_name = get_crate_path(&subscription_args.crate_path, subscription_args.internal);
     let (self_ty, self_name) = get_type_path_and_name(item_impl.self_ty.as_ref())?;
     let generics = &item_impl.generics;
     let where_clause = &item_impl.generics.where_clause;
     let extends = subscription_args.extends;
-    let directives =
-        gen_directive_calls(&subscription_args.directives, TypeDirectiveLocation::Object);
+    let directives = gen_directive_calls(
+        &crate_name,
+        &subscription_args.directives,
+        TypeDirectiveLocation::Object,
+    );
 
     let gql_typename = if !subscription_args.name_type {
         let name = subscription_args
@@ -36,6 +39,15 @@ pub fn generate(
         quote!(::std::borrow::Cow::Borrowed(#name))
     } else {
         quote!(<Self as #crate_name::TypeName>::type_name())
+    };
+    let gql_typename_string = if !subscription_args.name_type {
+        let name = subscription_args
+            .name
+            .clone()
+            .unwrap_or_else(|| RenameTarget::Type.rename(self_name.clone()));
+        quote!(::std::string::ToString::to_string(#name))
+    } else {
+        quote!(::std::string::ToString::to_string(&#gql_typename))
     };
 
     let desc = if subscription_args.use_type_description {
@@ -63,10 +75,13 @@ pub fn generate(
                     .rename_fields
                     .rename(method.sig.ident.unraw().to_string(), RenameTarget::Field)
             });
-            let field_desc = get_rustdoc(&method.attrs)?
+            let field_desc_value = get_rustdoc(&method.attrs)?;
+            let has_field_desc = field_desc_value.is_some();
+            let field_desc = field_desc_value
                 .map(|s| quote! {::std::option::Option::Some(::std::string::ToString::to_string(#s))})
                 .unwrap_or_else(|| quote! {::std::option::Option::None});
             let field_deprecation = gen_deprecation(&field.deprecation, &crate_name);
+            let has_deprecation = !matches!(field.deprecation, args::Deprecation::NoDeprecated);
             let cfg_attrs = get_cfg_attrs(&method.attrs);
 
             if method.sig.asyncness.is_none() {
@@ -103,40 +118,52 @@ pub fn generate(
                         .rename_args
                         .rename(ident.ident.unraw().to_string(), RenameTarget::Argument)
                 });
-                let desc = desc
-                    .as_ref()
-                    .map(|s| quote! {::std::option::Option::Some(::std::string::ToString::to_string(#s))})
-                    .unwrap_or_else(|| quote! {::std::option::Option::None});
+                let has_desc = desc.is_some();
                 let default = generate_default(default, default_with)?;
 
-                let schema_default = default
-                    .as_ref()
-                    .map(|value| {
-                        quote! {
-                            ::std::option::Option::Some(::std::string::ToString::to_string(
-                                &<#ty as #crate_name::InputType>::to_value(&#value)
-                            ))
-                        }
-                    })
-                    .unwrap_or_else(|| quote! {::std::option::Option::None});
+                let schema_default = default.as_ref().map(|value| {
+                    quote! {
+                        ::std::option::Option::Some(::std::string::ToString::to_string(
+                            &<#ty as #crate_name::InputType>::to_value(&#value)
+                        ))
+                    }
+                });
 
+                let has_visible = arg_visible.is_some();
                 let visible = visible_fn(arg_visible);
-                let deprecation = gen_deprecation(deprecation, &crate_name);
+                let has_deprecation = !matches!(deprecation, args::Deprecation::NoDeprecated);
+                let deprecation_expr = gen_deprecation(deprecation, &crate_name);
+
+                let mut arg_sets = Vec::new();
+                if has_desc {
+                    let desc = desc.as_ref().expect("checked desc");
+                    arg_sets.push(quote! {
+                        arg.description = ::std::option::Option::Some(::std::string::ToString::to_string(#desc));
+                    });
+                }
+                if let Some(schema_default) = schema_default {
+                    arg_sets.push(quote!(arg.default_value = #schema_default;));
+                }
+                if has_deprecation {
+                    arg_sets.push(quote!(arg.deprecation = #deprecation_expr;));
+                }
+                if has_visible {
+                    arg_sets.push(quote!(arg.visible = #visible;));
+                }
+                if *secret {
+                    arg_sets.push(quote!(arg.is_secret = true;));
+                }
 
                 schema_args.push(quote! {
-                    args.insert(::std::borrow::ToOwned::to_owned(#name), #crate_name::registry::MetaInputValue {
-                            name: ::std::string::ToString::to_string(#name),
-                            description: #desc,
-                            ty: <#ty as #crate_name::InputType>::create_type_info(registry),
-                            deprecation: #deprecation,
-                            default_value: #schema_default,
-                            visible: #visible,
-                            inaccessible: false,
-                            tags: ::std::default::Default::default(),
-                            is_secret: #secret,
-                            directive_invocations: ::std::vec![],
-                        });
-                    });
+                    {
+                        let mut arg = #crate_name::registry::MetaInputValue::new(
+                            ::std::string::ToString::to_string(#name),
+                            <#ty as #crate_name::InputType>::create_type_info(registry),
+                        );
+                        #(#arg_sets)*
+                        field.args.insert(::std::string::ToString::to_string(#name), arg);
+                    }
+                });
 
                 use_params.push(quote! { #ident });
 
@@ -208,6 +235,7 @@ pub fn generate(
                         .expect("invalid result type");
             }
 
+            let has_visible = !matches!(field.visible, None | Some(args::Visible::None));
             let visible = visible_fn(&field.visible);
             let complexity = if let Some(complexity) = &field.complexity {
                 let (variables, expr) = parse_complexity_expr(complexity.clone())?;
@@ -252,34 +280,43 @@ pub fn generate(
                 quote! { ::std::option::Option::None }
             };
 
-            let directives =
-                gen_directive_calls(&field.directives, TypeDirectiveLocation::FieldDefinition);
+            let has_complexity = field.complexity.is_some();
+            let has_directives = !field.directives.is_empty();
+            let directives = gen_directive_calls(
+                &crate_name,
+                &field.directives,
+                TypeDirectiveLocation::FieldDefinition,
+            );
+
+            let mut field_sets = Vec::new();
+            if has_field_desc {
+                field_sets.push(quote!(field.description = #field_desc;));
+            }
+            if has_deprecation {
+                field_sets.push(quote!(field.deprecation = #field_deprecation;));
+            }
+            if has_visible {
+                field_sets.push(quote!(field.visible = #visible;));
+            }
+            if has_complexity {
+                field_sets.push(quote!(field.compute_complexity = #complexity;));
+            }
+            if has_directives {
+                field_sets
+                    .push(quote!(field.directive_invocations = ::std::vec![ #(#directives),* ];));
+            }
 
             schema_fields.push(quote! {
                 #(#cfg_attrs)*
-                fields.insert(::std::borrow::ToOwned::to_owned(#field_name), #crate_name::registry::MetaField {
-                    name: ::std::borrow::ToOwned::to_owned(#field_name),
-                    description: #field_desc,
-                    args: {
-                        let mut args = #crate_name::indexmap::IndexMap::new();
-                        #(#schema_args)*
-                        args
-                    },
-                    ty: <<#stream_ty as #crate_name::futures_util::stream::Stream>::Item as #crate_name::OutputType>::create_type_info(registry),
-                    deprecation: #field_deprecation,
-                    cache_control: ::std::default::Default::default(),
-                    external: false,
-                    requires: ::std::option::Option::None,
-                    provides: ::std::option::Option::None,
-                    shareable: false,
-                    override_from: ::std::option::Option::None,
-                    visible: #visible,
-                    inaccessible: false,
-                    tags: ::std::default::Default::default(),
-                    compute_complexity: #complexity,
-                    directive_invocations: ::std::vec![ #(#directives),* ],
-                    requires_scopes: ::std::vec![],
-                });
+                {
+                    let mut field = #crate_name::registry::MetaField::new(
+                        ::std::string::ToString::to_string(#field_name),
+                        <<#stream_ty as #crate_name::futures_util::stream::Stream>::Item as #crate_name::OutputType>::create_type_info(registry),
+                    );
+                    #(#schema_args)*
+                    #(#field_sets)*
+                    fields.insert(::std::string::ToString::to_string(#field_name), field);
+                }
             });
 
             let create_field_stream = quote! {
@@ -400,6 +437,7 @@ pub fn generate(
     }
 
     let visible = visible_fn(&subscription_args.visible);
+    let field_count = schema_fields.len();
 
     let expanded = quote! {
         #item_impl
@@ -414,10 +452,10 @@ pub fn generate(
             #[allow(bare_trait_objects)]
             fn create_type_info(registry: &mut #crate_name::registry::Registry) -> ::std::string::String {
                 registry.create_subscription_type::<Self, _>(|registry| #crate_name::registry::MetaType::Object {
-                    name: ::std::borrow::Cow::into_owned(#gql_typename),
+                    name: #gql_typename_string,
                     description: #desc,
                     fields: {
-                        let mut fields = #crate_name::indexmap::IndexMap::new();
+                        let mut fields = #crate_name::indexmap::IndexMap::with_capacity(#field_count);
                         #(#schema_fields)*
                         fields
                     },
