@@ -7,13 +7,13 @@ use syn::{Error, LitInt};
 use crate::{
     args::{self, RenameTarget, TypeDirectiveLocation},
     utils::{
-        GeneratorResult, gen_boxed_trait, gen_directive_calls, get_crate_name, get_rustdoc,
+        GeneratorResult, gen_boxed_trait, gen_directive_calls, get_crate_path, get_rustdoc,
         visible_fn,
     },
 };
 
 pub fn generate(object_args: &args::MergedObject) -> GeneratorResult<TokenStream> {
-    let crate_name = get_crate_name(object_args.internal);
+    let crate_name = get_crate_path(&object_args.crate_path, object_args.internal);
     let boxed_trait = gen_boxed_trait(&crate_name);
     let ident = &object_args.ident;
     let (impl_generics, ty_generics, where_clause) = object_args.generics.split_for_impl();
@@ -35,8 +35,21 @@ pub fn generate(object_args: &args::MergedObject) -> GeneratorResult<TokenStream
     } else {
         quote!(<Self as #crate_name::TypeName>::type_name())
     };
+    let gql_typename_string = if !object_args.name_type {
+        let name = object_args
+            .name
+            .clone()
+            .unwrap_or_else(|| RenameTarget::Type.rename(ident.to_string()));
+        quote!(::std::string::ToString::to_string(#name))
+    } else {
+        quote!(::std::string::ToString::to_string(&#gql_typename))
+    };
 
-    let directives = gen_directive_calls(&object_args.directives, TypeDirectiveLocation::Object);
+    let directives = gen_directive_calls(
+        &crate_name,
+        &object_args.directives,
+        TypeDirectiveLocation::Object,
+    );
 
     let desc = get_rustdoc(&object_args.attrs)?
         .map(|s| quote! { ::std::option::Option::Some(::std::string::ToString::to_string(#s)) })
@@ -119,7 +132,7 @@ pub fn generate(object_args: &args::MergedObject) -> GeneratorResult<TokenStream
                     }
 
                     #crate_name::registry::MetaType::Object {
-                        name: ::std::borrow::Cow::into_owned(#gql_typename),
+                        name: #gql_typename_string,
                         description: #desc,
                         fields,
                         cache_control,

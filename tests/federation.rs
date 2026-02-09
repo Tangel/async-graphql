@@ -1,3 +1,5 @@
+#![cfg(feature = "dataloader")]
+#![cfg(feature = "tokio")]
 #![allow(unreachable_code)]
 #![allow(dead_code)]
 #![allow(clippy::diverging_sub_expression)]
@@ -5,9 +7,11 @@
 #[cfg(feature = "chrono")]
 use std::{collections::HashMap, convert::Infallible};
 
-#[cfg(feature = "dataloader")]
-use async_graphql::dataloader::{DataLoader, Loader};
-use async_graphql::*;
+use async_graphql::{
+    dataloader::{DataLoader, Loader},
+    runtime::{TokioSpawner, TokioTimer},
+    *,
+};
 
 #[tokio::test]
 pub async fn test_nested_key() {
@@ -203,7 +207,11 @@ pub async fn test_find_entity_with_context() {
     }
 
     let schema = Schema::build(Query, EmptyMutation, EmptySubscription)
-        .data(DataLoader::new(MyLoader, tokio::spawn))
+        .data(DataLoader::new(
+            MyLoader,
+            TokioSpawner::current(),
+            TokioTimer::default(),
+        ))
         .finish();
     let query = r#"{
             _entities(representations: [

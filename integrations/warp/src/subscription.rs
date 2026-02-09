@@ -6,6 +6,7 @@ use async_graphql::{
         DefaultOnConnInitType, DefaultOnPingType, WebSocketProtocols, WsMessage,
         default_on_connection_init, default_on_ping,
     },
+    runtime::TokioTimer,
 };
 use futures_util::{
     Sink, Stream, StreamExt, future,
@@ -40,13 +41,15 @@ use warp::{Error, Filter, Rejection, Reply, filters::ws, ws::Message};
 /// #[Subscription]
 /// impl SubscriptionRoot {
 ///     async fn tick(&self) -> impl Stream<Item = String> {
-///         async_stream::stream! {
+///         asynk_strim::stream_fn(|mut yielder| async move {
 ///             let mut interval = tokio::time::interval(Duration::from_secs(1));
 ///             loop {
 ///                 let n = interval.tick().await;
-///                 yield format!("{}", n.elapsed().as_secs_f32());
+///                 yielder
+///                     .yield_item(format!("{}", n.elapsed().as_secs_f32()))
+///                     .await;
 ///             }
-///         }
+///         })
 ///     }
 /// }
 ///
@@ -122,13 +125,15 @@ pub fn graphql_protocol() -> impl Filter<Extract = (WebSocketProtocols,), Error 
 /// #[Subscription]
 /// impl SubscriptionRoot {
 ///     async fn tick(&self) -> impl Stream<Item = String> {
-///         async_stream::stream! {
+///         asynk_strim::stream_fn(|mut yielder| async move {
 ///             let mut interval = tokio::time::interval(Duration::from_secs(1));
 ///             loop {
 ///                 let n = interval.tick().await;
-///                 yield format!("{}", n.elapsed().as_secs_f32());
+///                 yielder
+///                     .yield_item(format!("{}", n.elapsed().as_secs_f32()))
+///                     .await;
 ///             }
-///         }
+///         })
 ///     }
 /// }
 ///
@@ -307,7 +312,7 @@ where
             .connection_data(self.data)
             .on_connection_init(self.on_init)
             .on_ping(self.on_ping)
-            .keepalive_timeout(self.keepalive_timeout)
+            .keepalive_timeout(TokioTimer::default(), self.keepalive_timeout)
             .map(|msg| match msg {
                 WsMessage::Text(text) => ws::Message::text(text),
                 WsMessage::Close(code, status) => ws::Message::close_with(code, status),

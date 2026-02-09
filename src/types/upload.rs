@@ -1,7 +1,6 @@
-use std::{borrow::Cow, io::Read, ops::Deref, sync::Arc};
+use std::{borrow::Cow, ops::Deref, sync::Arc};
 
-#[cfg(feature = "unblock")]
-use futures_util::io::AsyncRead;
+use futures_util::AsyncRead;
 
 use crate::{
     Context, InputType, InputValueError, InputValueResult, Value, registry, registry::MetaTypeId,
@@ -48,24 +47,7 @@ impl UploadValue {
         }
     }
 
-    /// Convert to a `Read`.
-    ///
-    /// **Note**: this is a *synchronous/blocking* reader.
-    pub fn into_read(self) -> impl Read + Sync + Send + 'static {
-        #[cfg(feature = "tempfile")]
-        {
-            self.content
-        }
-
-        #[cfg(not(feature = "tempfile"))]
-        {
-            std::io::Cursor::new(self.content)
-        }
-    }
-
     /// Convert to a `AsyncRead`.
-    #[cfg(feature = "unblock")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "unblock")))]
     pub fn into_async_read(self) -> impl AsyncRead + Sync + Send + 'static {
         #[cfg(feature = "tempfile")]
         {
@@ -74,7 +56,7 @@ impl UploadValue {
 
         #[cfg(not(feature = "tempfile"))]
         {
-            std::io::Cursor::new(self.content)
+            futures_util::io::Cursor::new(self.content)
         }
     }
 
@@ -159,7 +141,7 @@ impl InputType for Upload {
     fn create_type_info(registry: &mut registry::Registry) -> String {
         registry.create_input_type::<Self, _>(MetaTypeId::Scalar, |_| registry::MetaType::Scalar {
             name: Self::type_name().to_string(),
-            description: None,
+            description: Some("A multipart file upload".to_string()),
             is_valid: Some(Arc::new(|value| matches!(value, Value::String(_)))),
             visible: None,
             inaccessible: false,
@@ -175,10 +157,10 @@ impl InputType for Upload {
     fn parse(value: Option<Value>) -> InputValueResult<Self> {
         const PREFIX: &str = "#__graphql_file__:";
         let value = value.unwrap_or_default();
-        if let Value::String(s) = &value {
-            if let Some(filename) = s.strip_prefix(PREFIX) {
-                return Ok(Upload(filename.parse::<usize>().unwrap()));
-            }
+        if let Value::String(s) = &value
+            && let Some(filename) = s.strip_prefix(PREFIX)
+        {
+            return Ok(Upload(filename.parse::<usize>().unwrap()));
         }
         Err(InputValueError::expected_type(value))
     }

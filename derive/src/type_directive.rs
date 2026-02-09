@@ -5,7 +5,7 @@ use syn::{FnArg, ItemFn, Pat, ext::IdentExt};
 use crate::{
     args::{self, Argument, RenameRuleExt, RenameTarget},
     utils::{
-        GeneratorResult, gen_deprecation, generate_default, get_crate_name, get_rustdoc,
+        GeneratorResult, gen_deprecation, generate_default, get_crate_path, get_rustdoc,
         parse_graphql_attrs, remove_graphql_attrs, visible_fn,
     },
 };
@@ -14,7 +14,7 @@ pub fn generate(
     directive_args: &args::TypeDirective,
     item_fn: &mut ItemFn,
 ) -> GeneratorResult<TokenStream> {
-    let crate_name = get_crate_name(directive_args.internal);
+    let crate_name = get_crate_path(&directive_args.crate_path, directive_args.internal);
     let ident = &item_fn.sig.ident;
     let vis = &item_fn.vis;
     let directive_name = if !directive_args.name_type {
@@ -44,11 +44,11 @@ pub fn generate(
     for arg in item_fn.sig.inputs.iter_mut() {
         let mut arg_info = None;
 
-        if let FnArg::Typed(pat) = arg {
-            if let Pat::Ident(ident) = &*pat.pat {
-                arg_info = Some((ident.clone(), pat.ty.clone(), pat.attrs.clone()));
-                remove_graphql_attrs(&mut pat.attrs);
-            }
+        if let FnArg::Typed(pat) = arg
+            && let Pat::Ident(ident) = &*pat.pat
+        {
+            arg_info = Some((ident.clone(), pat.ty.clone(), pat.attrs.clone()));
+            remove_graphql_attrs(&mut pat.attrs);
         }
 
         let (arg_ident, arg_ty, arg_attrs) = match arg_info {
@@ -75,37 +75,53 @@ pub fn generate(
                 .rename_args
                 .rename(arg_ident.ident.unraw().to_string(), RenameTarget::Argument)
         });
-        let desc = desc
-            .as_ref()
-            .map(|s| quote! {::std::option::Option::Some(::std::string::ToString::to_string(#s))})
-            .unwrap_or_else(|| quote! {::std::option::Option::None});
         let default = generate_default(&default, &default_with)?;
-        let schema_default = default
-            .as_ref()
-            .map(|value| {
-                quote! {
-                    ::std::option::Option::Some(::std::string::ToString::to_string(
-                        &<#arg_ty as #crate_name::InputType>::to_value(&#value)
-                    ))
-                }
-            })
-            .unwrap_or_else(|| quote! {::std::option::Option::None});
+        let has_desc = desc.is_some();
+        let schema_default = default.as_ref().map(|value| {
+            quote! {
+                ::std::option::Option::Some(::std::string::ToString::to_string(
+                    &<#arg_ty as #crate_name::InputType>::to_value(&#value)
+                ))
+            }
+        });
+        let has_visible = visible.is_some();
         let visible = visible_fn(&visible);
-        let deprecation = gen_deprecation(&deprecation, &crate_name);
+        let has_deprecation = !matches!(deprecation, args::Deprecation::NoDeprecated);
+        let deprecation_expr = gen_deprecation(&deprecation, &crate_name);
+        let has_directives = !directives.is_empty();
+
+        let mut arg_sets = Vec::new();
+        if has_desc {
+            let desc = desc.as_ref().expect("checked desc");
+            arg_sets.push(quote! {
+                arg.description = ::std::option::Option::Some(::std::string::ToString::to_string(#desc));
+            });
+        }
+        if let Some(schema_default) = schema_default {
+            arg_sets.push(quote!(arg.default_value = #schema_default;));
+        }
+        if has_deprecation {
+            arg_sets.push(quote!(arg.deprecation = #deprecation_expr;));
+        }
+        if has_visible {
+            arg_sets.push(quote!(arg.visible = #visible;));
+        }
+        if secret {
+            arg_sets.push(quote!(arg.is_secret = true;));
+        }
+        if has_directives {
+            arg_sets.push(quote!(arg.directive_invocations = ::std::vec![ #(#directives),* ];));
+        }
 
         schema_args.push(quote! {
-            args.insert(::std::borrow::ToOwned::to_owned(#name), #crate_name::registry::MetaInputValue {
-                name: ::std::string::ToString::to_string(#name),
-                description: #desc,
-                ty: <#arg_ty as #crate_name::InputType>::create_type_info(registry),
-                deprecation: #deprecation,
-                default_value: #schema_default,
-                visible: #visible,
-                inaccessible: false,
-                tags: ::std::default::Default::default(),
-                is_secret: #secret,
-                directive_invocations: ::std::vec![ #(#directives),* ],
-            });
+            {
+                let mut arg = #crate_name::registry::MetaInputValue::new(
+                    ::std::string::ToString::to_string(#name),
+                    <#arg_ty as #crate_name::InputType>::create_type_info(registry),
+                );
+                #(#arg_sets)*
+                args.insert(::std::borrow::ToOwned::to_owned(#name), arg);
+            }
         });
 
         input_args.push(quote! { #arg });
@@ -141,6 +157,7 @@ pub fn generate(
         .collect::<Vec<_>>();
 
     let expanded = quote! {
+        #[allow(missing_docs)]
         #[allow(non_camel_case_types)]
         #vis struct #ident;
 
@@ -172,6 +189,7 @@ pub fn generate(
        #(impl #crate_name::registry::location_traits::#location_traits for #ident {})*
 
         impl #ident {
+            #[allow(missing_docs)]
             pub fn apply(#(#input_args),*) -> #crate_name::registry::MetaDirectiveInvocation {
                 let directive = ::std::borrow::Cow::into_owned(#directive_name);
                 let mut args = #crate_name::indexmap::IndexMap::new();
